@@ -42,11 +42,19 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: isLandscape ? 10 : 16) {
                 HStack(spacing: 12) {
                     ZStack {
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(.white.opacity(0.15))
+                        RoundedRectangle(cornerRadius: isLandscape ? 10 : 12)
+                            .fill(MeshGradient(
+                                width: 2, height: 2,
+                                points: [[0,0],[1,0],[0,1],[1,1]],
+                                colors: [
+                                    .hex("68C040"), .hex("DDAC20"),
+                                    .hex("3A58C8"), .hex("D04444")
+                                ]
+                            ))
                             .frame(width: isLandscape ? 42 : 50, height: isLandscape ? 42 : 50)
-                        Image(systemName: "doc.richtext.fill")
-                            .font(.system(size: isLandscape ? 20 : 24, weight: .bold))
+                            .shadow(color: .black.opacity(0.25), radius: 6, x: 0, y: 3)
+                        Text("P")
+                            .font(.system(size: isLandscape ? 22 : 28, weight: .bold, design: .rounded))
                             .foregroundStyle(.white)
                     }
                     VStack(alignment: .leading, spacing: 3) {
@@ -155,10 +163,23 @@ struct HomeView: View {
     @ToolbarContentBuilder
     private var navBarContent: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            HStack(spacing: 6) {
-                Image(systemName: "doc.richtext.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
+            HStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(MeshGradient(
+                            width: 2, height: 2,
+                            points: [[0,0],[1,0],[0,1],[1,1]],
+                            colors: [
+                                .hex("68C040"), .hex("DDAC20"),
+                                .hex("3A58C8"), .hex("D04444")
+                            ]
+                        ))
+                        .frame(width: 26, height: 26)
+                        .shadow(color: .black.opacity(0.2), radius: 3, x: 0, y: 1)
+                    Text("P")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                }
                 Text("PDF Studio")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.white)
