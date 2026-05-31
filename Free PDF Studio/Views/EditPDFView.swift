@@ -10,6 +10,16 @@ struct EditPDFView: View {
     @State private var pendingPoint: CGPoint = .zero
     @State private var annotationText = ""
     @State private var showErrorAlert = false
+    // Detected style at tap location
+    @State private var pendingFontName: String = "Helvetica"
+    @State private var pendingFontSize: CGFloat = 12
+    @State private var pendingColorHex: String = "1A1A1A"
+    /// Bounds of existing PDF text to white-out (nil when adding new text)
+    @State private var pendingCoverBounds: CGRect? = nil
+    /// Whether the sheet is replacing existing text (true) or adding new (false)
+    @State private var isEditingExisting: Bool = false
+
+    private var pendingColor: Color { Color.hex(pendingColorHex) }
 
     private let toolColors: [Color] = SectionPalette.edit
 
@@ -177,6 +187,7 @@ struct EditPDFView: View {
             VStack(spacing: 14) {
                 ProgressView().tint(.white).scaleEffect(1.4)
                 Text("Saving…").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                Text("This may take a moment").font(.caption).foregroundStyle(.white.opacity(0.7))
             }
             .padding(32)
             .background(.ultraThinMaterial)
@@ -188,24 +199,48 @@ struct EditPDFView: View {
 
     private var annotationInputSheet: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                TextField("Type your annotation…", text: $annotationText, axis: .vertical)
-                    .lineLimit(4...)
+            VStack(spacing: 16) {
+                // Detected style badge
+                HStack(spacing: 8) {
+                    Image(systemName: "textformat")
+                        .font(.caption2.weight(.semibold))
+                    Text(pendingFontName)
+                        .font(.caption2.weight(.medium))
+                    Text("·")
+                    Text("\(Int(pendingFontSize))pt")
+                        .font(.caption2)
+                    Spacer()
+                    Circle()
+                        .fill(pendingColor)
+                        .frame(width: 13, height: 13)
+                        .overlay(Circle().stroke(Color.secondary.opacity(0.3), lineWidth: 1))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+
+                // Text input — styled with detected font/color
+                TextField("Type your text…", text: $annotationText, axis: .vertical)
+                    .lineLimit(3...)
+                    .font(.custom(pendingFontName, size: min(pendingFontSize, 20)))
+                    .foregroundStyle(pendingColor)
                     .padding(14)
                     .background(Color.studioBg)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .padding(.horizontal, 16)
 
                 Button { commitAnnotation() } label: {
-                    Label("Add to PDF", systemImage: "plus.circle.fill")
-                        .gradientButtonStyle(colors: toolColors)
+                    Label(
+                        isEditingExisting ? "Replace Text" : "Add to PDF",
+                        systemImage: isEditingExisting ? "checkmark.circle.fill" : "plus.circle.fill"
+                    )
+                    .gradientButtonStyle(colors: toolColors)
                 }
                 .padding(.horizontal, 16)
                 .disabled(annotationText.trimmingCharacters(in: .whitespaces).isEmpty)
                 Spacer()
             }
             .padding(.top, 16)
-            .navigationTitle("Add Annotation")
+            .navigationTitle(isEditingExisting ? "Edit Text" : "Add Text")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -213,7 +248,7 @@ struct EditPDFView: View {
                 }
             }
         }
-        .presentationDetents([.height(260)])
+        .presentationDetents([.height(290)])
         .presentationCornerRadius(24)
     }
 
@@ -280,15 +315,70 @@ struct EditPDFView: View {
     private func handleTap(page: PDFPage, point: CGPoint) {
         guard vm.document != nil else { return }
         pendingPage = page
-        pendingPoint = point
+
+        // Try to detect an existing line of text at the tap point
+        if let selection = page.selectionForLine(at: point),
+           let selectedText = selection.string,
+           !selectedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Editing existing text
+            let cover = selection.bounds(for: page)
+            pendingCoverBounds = cover
+            pendingPoint = CGPoint(x: cover.minX, y: cover.minY)
+            annotationText = selectedText.trimmingCharacters(in: .newlines)
+            isEditingExisting = true
+            // Detect style from the selection's attributed string
+            if let attr = selection.attributedString, attr.length > 0 {
+                let attrs = attr.attributes(at: 0, effectiveRange: nil)
+                #if canImport(UIKit)
+                if let font = attrs[.font] as? UIFont {
+                    pendingFontName = font.fontName
+                    pendingFontSize = font.pointSize
+                }
+                if let color = attrs[.foregroundColor] as? UIColor {
+                    var rr: CGFloat = 0, gg: CGFloat = 0, bb: CGFloat = 0, aa: CGFloat = 0
+                    color.getRed(&rr, green: &gg, blue: &bb, alpha: &aa)
+                    pendingColorHex = String(format: "%02X%02X%02X", Int(rr*255), Int(gg*255), Int(bb*255))
+                }
+                #elseif canImport(AppKit)
+                if let font = attrs[.font] as? NSFont {
+                    pendingFontName = font.fontName
+                    pendingFontSize = font.pointSize
+                }
+                if let color = (attrs[.foregroundColor] as? NSColor)?.usingColorSpace(.deviceRGB) {
+                    pendingColorHex = String(format: "%02X%02X%02X",
+                        Int(color.redComponent*255), Int(color.greenComponent*255), Int(color.blueComponent*255))
+                }
+                #endif
+            }
+        } else {
+            // No existing text — adding new annotation
+            pendingPoint = point
+            pendingCoverBounds = nil
+            annotationText = ""
+            isEditingExisting = false
+            let style = vm.detectTextStyle(at: point, on: page)
+            pendingFontName = style.fontName
+            pendingFontSize = style.fontSize
+            pendingColorHex = style.hexColor
+        }
         showAnnotationInput = true
     }
 
     private func commitAnnotation() {
         guard let page = pendingPage, let document = vm.document else { return }
         let idx = document.index(for: page)
-        vm.addAnnotation(text: annotationText, pagePoint: pendingPoint, pageIndex: idx)
+        vm.addAnnotation(
+            text: annotationText,
+            pagePoint: pendingPoint,
+            pageIndex: idx,
+            fontName: pendingFontName,
+            fontSize: pendingFontSize,
+            colorHex: pendingColorHex,
+            coverBounds: pendingCoverBounds
+        )
         annotationText = ""
+        pendingCoverBounds = nil
+        isEditingExisting = false
         showAnnotationInput = false
     }
 }

@@ -38,8 +38,14 @@ struct TextAnnotationData: Identifiable, Equatable {
     var text: String
     /// Position in PDF-page coordinate space (origin bottom-left).
     var pagePoint: CGPoint
-    var fontSize: CGFloat = 14
     var pageIndex: Int
+    /// Font PostScript name detected from the PDF at the tap location.
+    var fontName: String = "Helvetica"
+    var fontSize: CGFloat = 12
+    /// Hex RGB string e.g. "1A1A1A" — detected from PDF text color at tap location.
+    var colorHex: String = "000000"
+    /// When non-nil, a white-out rectangle is drawn here before the new text (covers original text).
+    var coverBounds: CGRect? = nil
 
     static func == (lhs: TextAnnotationData, rhs: TextAnnotationData) -> Bool {
         lhs.id == rhs.id

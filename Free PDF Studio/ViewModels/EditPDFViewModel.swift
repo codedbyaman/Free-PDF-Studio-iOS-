@@ -1,6 +1,11 @@
 import Foundation
 import PDFKit
 import Observation
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 @Observable
 final class EditPDFViewModel {
@@ -47,12 +52,67 @@ final class EditPDFViewModel {
 
     // MARK: - Annotations
 
-    func addAnnotation(text: String, pagePoint: CGPoint, pageIndex: Int) {
+    func addAnnotation(
+        text: String,
+        pagePoint: CGPoint,
+        pageIndex: Int,
+        fontName: String = "Helvetica",
+        fontSize: CGFloat = 12,
+        colorHex: String = "000000",
+        coverBounds: CGRect? = nil
+    ) {
         guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         pushUndo()
-        annotations.append(
-            TextAnnotationData(text: text, pagePoint: pagePoint, pageIndex: pageIndex)
-        )
+        annotations.append(TextAnnotationData(
+            text: text,
+            pagePoint: pagePoint,
+            pageIndex: pageIndex,
+            fontName: fontName,
+            fontSize: fontSize,
+            colorHex: colorHex,
+            coverBounds: coverBounds
+        ))
+    }
+
+    // MARK: - Font/Color Detection
+
+    /// Detects the font name, size, and hex color of existing PDF text nearest to `point` on `page`.
+    func detectTextStyle(at point: CGPoint, on page: PDFPage) -> (fontName: String, fontSize: CGFloat, hexColor: String) {
+        let fallback = ("Helvetica", CGFloat(12), "1A1A1A")
+        guard let attrStr = page.attributedString, attrStr.length > 0 else { return fallback }
+
+        // Find character index at tap point; clamp to valid range
+        let rawIdx = page.characterIndex(at: point)
+        let idx = max(0, min(rawIdx, attrStr.length - 1))
+
+        let attrs = attrStr.attributes(at: idx, effectiveRange: nil)
+
+        var fontName = "Helvetica"
+        var fontSize: CGFloat = 12
+        var hexColor = "1A1A1A"
+
+        #if canImport(UIKit)
+        if let font = attrs[.font] as? UIFont {
+            fontName = font.fontName      // PostScript name: e.g. "Helvetica-Bold"
+            fontSize = font.pointSize
+        }
+        if let color = attrs[.foregroundColor] as? UIColor {
+            var rr: CGFloat = 0, gg: CGFloat = 0, bb: CGFloat = 0, aa: CGFloat = 0
+            color.getRed(&rr, green: &gg, blue: &bb, alpha: &aa)
+            hexColor = String(format: "%02X%02X%02X", Int(rr*255), Int(gg*255), Int(bb*255))
+        }
+        #elseif canImport(AppKit)
+        if let font = attrs[.font] as? NSFont {
+            fontName = font.fontName
+            fontSize = font.pointSize
+        }
+        if let color = (attrs[.foregroundColor] as? NSColor)?.usingColorSpace(.deviceRGB) {
+            hexColor = String(format: "%02X%02X%02X",
+                Int(color.redComponent*255), Int(color.greenComponent*255), Int(color.blueComponent*255))
+        }
+        #endif
+
+        return (fontName, fontSize, hexColor)
     }
 
     func deleteAnnotation(id: UUID) {
@@ -97,7 +157,8 @@ final class EditPDFViewModel {
         let saved = await Task.detached(priority: .userInitiated) {
             for entry in annotationsCopy {
                 guard let page = documentRef.page(at: entry.pageIndex) else { continue }
-                let bounds = CGRect(
+                // Use the original text's exact bounds when replacing; otherwise default size
+                let bounds = entry.coverBounds ?? CGRect(
                     x: entry.pagePoint.x,
                     y: entry.pagePoint.y,
                     width: 200,
@@ -107,10 +168,14 @@ final class EditPDFViewModel {
                     to: page,
                     text: entry.text,
                     at: bounds,
-                    fontSize: entry.fontSize
+                    fontName: entry.fontName,
+                    fontSize: entry.fontSize,
+                    colorHex: entry.colorHex,
+                    coverBounds: entry.coverBounds
                 )
             }
-            return PDFProcessor.saveToTemp(documentRef, name: "edited")
+            let flat = PDFProcessor.flattenDocument(documentRef)
+            return PDFProcessor.saveToTemp(flat, name: "edited")
         }.value
 
         if let url = saved {
